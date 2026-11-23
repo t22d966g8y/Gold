@@ -109,7 +109,7 @@ input[type=range]{padding:0;border:0}
     <span id="pbAge" class="chip none">尚未輸入</span>
   </div>
   <div class="row" style="margin-bottom:6px"><button type="button" class="p" id="btnPaste">從剪貼簿填入永豐牌價</button></div>
-  <div class="hint" style="margin:0 0 8px">用法：開永豐牌價頁 → 全選複製（Ctrl/⌘ + A，再 C）→ 回到這裡按上方按鈕。</div>
+  <div class="hint" style="margin:0 0 8px">用法：開永豐牌價頁 → 全選複製（Ctrl/⌘ + A，再 C）→ 回到這裡按上方按鈕。也可以貼上 DevTools 的 Response 內容。</div>
   <div id="pasteMsg" class="warn"></div>
   <details id="pasteBox" style="margin-bottom:8px"><summary class="lbl" style="cursor:pointer">剪貼簿讀不到時：手動貼上頁面文字</summary>
     <textarea id="pbPaste" rows="4" style="width:100%;margin-top:6px;background:var(--in);color:var(--t);border:1px solid var(--bd);border-radius:8px;padding:8px;font-size:13px" placeholder="在永豐牌價頁全選、複製，貼到這裡"></textarea>
@@ -175,6 +175,7 @@ input[type=range]{padding:0;border:0}
     <div><label>條塊回收比例 %</label><input id="cBar" type="number" step="0.1"></div>
     <div><label>匯率加價（中間價→銀行賣出）元</label><input id="cFx" type="number" step="0.01"></div>
     <div><label>報價逾時視為過期（分鐘）</label><input id="cStale" type="number" step="1"></div>
+    <div style="grid-column:1/-1"><label>永豐牌價資料網址（留空即使用內建中繼，每次更新自動抓取）</label><input id="cSinopac" type="text" placeholder="留空＝使用內建的 sinopac-gold 中繼網址"></div>
     <div><label>自動更新</label><select id="cPoll"><option value="0">手動</option><option value="30">30 秒</option><option value="60">1 分鐘</option><option value="300">5 分鐘</option></select></div>
   </div>
   <div class="hint">這些都是你自己的估計，不是官方數值。請依常去店家與銀行實際報價調整，設定會存在此瀏覽器。</div>
@@ -186,7 +187,8 @@ input[type=range]{padding:0;border:0}
 <script>
 const OZ=31.1034768, MACE=3.75;
 const $=id=>document.getElementById(id);
-const DEF={premium:3.5,scrap:95,bar:99.5,fxSpread:0,staleMin:15,poll:60,ttype:'shop',target:''};
+const SINOPAC_DEFAULT='https://sinopac-gold.t22d966g8y.workers.dev/';
+const DEF={sinopacUrl:'',premium:3.5,scrap:95,bar:99.5,fxSpread:0,staleMin:15,poll:60,ttype:'shop',target:''};
 const rd=(k,d)=>{try{return {...d,...JSON.parse(localStorage.getItem(k)||'{}')}}catch(e){return {...d}}};
 const wr=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
 let cfg=rd('gold_cfg_v2',DEF), pb=rd('gold_pb_v2',{sell:'',buy:'',ts:null});
@@ -224,7 +226,7 @@ async function refresh(){
   else errs.push('匯率更新失敗'+(mkt.fx?'，沿用舊資料':''));
   if(!g.length&&!f.length)errs.push(location.protocol==='file:'?'全部來源失敗：以檔案直接開啟時部分網站會拒絕連線，建議放到自己的網站或用本機伺服器開啟':'全部來源失敗：若在預覽視窗或內嵌框中開啟，外部連線會被擋，請改用 Chrome／Safari 直接開啟');
   if(diag.length&&(!g.length||!f.length))errs.push('詳細：'+diag.join('、'));
-  busy=false; $('btnRefresh').textContent='立即更新'; recordBase(false); cd=cfg.poll; render();
+  busy=false; $('btnRefresh').textContent='立即更新'; await pullSinopac(); recordBase(false); cd=cfg.poll; render();
 }
 
 /* ---------- 工具 ---------- */
@@ -289,7 +291,7 @@ function render(){
   if(ps>0&&pbu>0&&pbu>=ps)pm='買進價不應高於賣出價，請檢查是否填反';
   if(pbOk&&gram&&Math.abs(ps/gram-1)>.08)pm='與國際換算價差距超過 8%，可能輸入錯誤或報價已過時';
   $('pbMsg').textContent=pm;
-  if(pb.ts){const a=ageMin(pb.qtMs||pb.ts);$('pbAge').className='chip '+(a>60?'stale':'ok');$('pbAge').textContent=`${pb.qt?'貼上自官網（'+pb.qt+'）':'手動輸入'}・${a<1?'剛輸入':a<90?Math.floor(a)+' 分鐘前':Math.floor(a/60)+' 小時前'}${a>60?'（可能已過期）':''}`}
+  if(pb.ts){const a=ageMin(pb.qtMs||pb.ts);$('pbAge').className='chip '+(a>60?'stale':'ok');$('pbAge').textContent=`${pb.qt?'永豐官網（查詢時間 '+pb.qt+'）':'手動輸入'}・${a<1?'剛輸入':a<90?Math.floor(a)+' 分鐘前':Math.floor(a/60)+' 小時前'}${a>60?'（可能已過期）':''}`}
   else{$('pbAge').className='chip none';$('pbAge').textContent='尚未輸入'}
   $('pbSpread').textContent=pbOk?fmt(ps-pbu):'--';
   $('pbSpreadPct').textContent=pbOk?((ps-pbu)/ps*100).toFixed(2):'--';
@@ -359,7 +361,24 @@ function render(){
 
 
 /* ---------- 永豐頁面文字解析（貼上複製的頁面內容） ---------- */
+function parseSinopacJson(raw){
+  let j; try{j=JSON.parse(raw)}catch(e){return null}
+  const o=Array.isArray(j)?j[0]:j;
+  if(!o||!o.SubInfo1)return null;
+  const n=v=>parseFloat(String(v==null?'':v).replace(/,/g,''));
+  const t=(o.SubInfo1||[])[0]||{}, u=(o.SubInfo2||[])[0]||{};
+  const buy=n(t.DataValue2), sell=n(t.DataValue3);
+  if(!/公克/.test(String(t.DataValue1||'')))return{err:'資料格式不是 1 公克牌價，請確認網址是否正確'};
+  if(!(buy>0&&sell>buy&&sell/buy<1.05))return{err:`數字不合理（買進 ${buy}、賣出 ${sell}），未填入`};
+  const ub=n(u.DataValue2), us=n(u.DataValue3);
+  const tm=String(o.QueryDate||'').match(/(20\d{2})[\/-](\d{1,2})[\/-](\d{1,2}) +(\d{1,2}):(\d{2})/);
+  let qt=null,qtMs=null;
+  if(tm){const z=x=>String(x).padStart(2,'0');qt=`${tm[1]}/${z(tm[2])}/${z(tm[3])} ${z(tm[4])}:${tm[5]}`;qtMs=Date.parse(`${tm[1]}-${z(tm[2])}-${z(tm[3])}T${z(tm[4])}:${tm[5]}:00+08:00`)}
+  return{buy,sell,usd:ub>0&&us>0?[ub,us]:null,qt,qtMs};
+}
 function parseSinopac(raw){
+  const rs=String(raw||'').trim();
+  if(rs[0]==='['||rs[0]==='{'){const jr=parseSinopacJson(rs);if(jr)return jr}
   const t=String(raw||'').replace(/\s+/g,' ');
   if(t.length<20)return{err:'剪貼簿內容太短，請先在永豐牌價頁全選複製'};
   const nums=(label)=>{
@@ -378,7 +397,7 @@ function parseSinopac(raw){
   if(tm){const z=n=>String(n).padStart(2,'0');qt=`${tm[1]}/${z(tm[2])}/${z(tm[3])} ${z(tm[4])}:${tm[5]}`;qtMs=Date.parse(`${tm[1]}-${z(tm[2])}-${z(tm[3])}T${z(tm[4])}:${tm[5]}:00+08:00`)}
   return{buy,sell,usd:us,qt,qtMs};
 }
-function applyPb(text){
+function applyPb(text,silent){
   const r=parseSinopac(text), el=$('pasteMsg');
   if(r.err){el.className='err';el.textContent=r.err;return}
   let gram=null;
@@ -387,8 +406,21 @@ function applyPb(text){
   pb={sell:r.sell,buy:r.buy,ts:Date.now(),gram,qt:r.qt,qtMs:r.qtMs};
   $('pbSell').value=r.sell;$('pbBuy').value=r.buy;wr('gold_pb_v2',pb);
   el.className='warn';
-  el.textContent=`已填入：賣出 ${fmt(r.sell)}／買進 ${fmt(r.buy)}${r.qt?'（官網時間 '+r.qt+'）':''}`+(gram?'':'。此牌價與目前國際報價時間不同，隔日預估暫不使用它');
+  el.textContent=(silent?'自動更新：':'')+`已填入：賣出 ${fmt(r.sell)}／買進 ${fmt(r.buy)}${r.qt?'（官網查詢時間 '+r.qt+'）':''}`+(gram?'':'。此牌價與目前國際報價時間不同，隔日預估暫不使用它');
   render();
+}
+
+async function pullSinopac(){
+  const u=(cfg.sinopacUrl||SINOPAC_DEFAULT).trim(); if(!u)return;
+  const el=$('pasteMsg');
+  try{
+    const r=await fetch(u+(u.includes('?')?'&':'?')+'_='+Date.now(),{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    applyPb(await r.text(),true);
+  }catch(e){
+    el.className='err';
+    el.textContent='永豐自動抓取失敗：'+(e.message==='Failed to fetch'?'被瀏覽器擋下（多半是跨網域限制，需要中繼程式）':e.message)+'。可改用手動貼上。';
+  }
 }
 
 /* ---------- 事件 ---------- */
@@ -396,7 +428,7 @@ function bindCfg(id,key,num=true){
   const el=$(id); el.value=cfg[key];
   el.addEventListener('input',()=>{const v=num?parseFloat(el.value):el.value;if(num&&!isFinite(v))return;cfg[key]=v;wr('gold_cfg_v2',cfg);if(key==='poll'){cd=v}render()});
 }
-bindCfg('cPrem','premium');bindCfg('cScrap','scrap');bindCfg('cBar','bar');bindCfg('cFx','fxSpread');bindCfg('cStale','staleMin');bindCfg('cPoll','poll');
+bindCfg('cPrem','premium');bindCfg('cScrap','scrap');bindCfg('cBar','bar');bindCfg('cFx','fxSpread');bindCfg('cStale','staleMin');bindCfg('cPoll','poll');bindCfg('cSinopac','sinopacUrl',false);
 $('ttype').value=cfg.ttype; $('target').value=cfg.target;
 $('ttype').addEventListener('change',()=>{cfg.ttype=$('ttype').value;wr('gold_cfg_v2',cfg);was=false;render()});
 $('target').addEventListener('input',()=>{cfg.target=$('target').value;wr('gold_cfg_v2',cfg);was=false;render()});
