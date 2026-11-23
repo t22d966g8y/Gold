@@ -13,7 +13,8 @@ main{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
 h2{font-size:14px;margin-bottom:10px}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;align-items:end}
+.grid3 label{white-space:nowrap}
 @media(max-width:520px){.grid{grid-template-columns:1fr}}
 .box{background:var(--in);border:1px solid var(--bd);border-radius:10px;padding:10px}
 .lbl{font-size:11.5px;color:var(--t2)}
@@ -157,8 +158,9 @@ input[type=range]{padding:0;border:0}
   <div class="grid3">
     <div><label>重量</label><input id="w" type="number" step="0.01" value="0.08"></div>
     <div><label>單位</label><select id="u"><option value="mace">台錢</option><option value="gram">公克</option></select></div>
-    <div><label>工錢 NT$（預設為估計）</label><input id="fee" type="number" step="50" value="150"></div>
+    <div><label>工錢 NT$</label><input id="fee" type="number" step="50" value="150"></div>
   </div>
+  <div class="hint">預設工錢是估計值，請改成店家實際報價。</div>
   <div class="box" style="margin-top:8px">
     <div class="sum"><span class="lbl">總入手金額（含工錢）</span><b id="tot" class="num" style="font-size:20px">--</b></div>
     <div class="sum"><span class="lbl">金料價 / 每錢平均成本</span><span><span id="mat">--</span> / <span id="avg">--</span></span></div>
